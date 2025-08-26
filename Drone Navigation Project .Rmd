@@ -1,0 +1,369 @@
+---
+title: "Project"
+output: html_document
+date: "2025-07-26"
+---
+ 
+# Step 0: Load necessary packages and libraries
+```{r}
+library(tidyverse) # Handling missing values and visualization 
+library(naniar) # Handling missing values and visualization
+library(mice) # Handeling missing values
+library(MissMech) # Handeling missing values
+library(tidyr) # Long format
+#install.packages("ggcorrplot")
+library(ggcorrplot) # Plot the correlation matrix
+#install.packages("lmtest")
+library(lmtest) # For checking independency
+#install.packages("car")
+library(car) # For checking multicollinearity
+library(brms) # For Bayesian model
+#install.packages("ggplot2")
+library (ggplot2) # For visualization
+library(arm) # For logistic regression
+```
+
+# Step 1: Import the dataset
+```{r}
+Nasa = read.csv("C:/Users/aalam/OneDrive/Desktop/Advanced Data Analytics/map_info.csv")
+```
+#################################################### Exploratory Data Analysis################################################
+
+# Step 2: Overview of the dataset
+```{r}
+head(Nasa)
+
+# Make all column name consistent 
+names(Nasa)[names(Nasa) == "reported.obstacles"] <- "reported_obstacles"
+
+head(Nasa)
+str(Nasa)
+```
+All variables are integer except the "map source" variable, which I convert it to factor to make it easier to use in modeling and analysis.
+
+
+#Step 3: Converting categorical variables into factor
+```{r}
+Nasa$map_source <- as.factor(Nasa$map_source)
+
+# Check the dataset
+str(Nasa)
+levels(Nasa$map_source)
+```
+
+
+# Step 4:Descriptive Statistics
+```{r}
+summary(Nasa)
+```
+The dataset includes coordinates (x,y), a block identifier (sq), a few numeric variables with their min, max, mean, median and quartiles. The "reported obstacles" variable contains 7 missing values. The "map source" variable, which has been converted to a factor, is a categorical variable with three distinct levels: Apple (13), Army (73),and Google (14)
+
+
+# Step5: Handling the missing values
+```{r}
+colSums(is.na(Nasa))
+vis_miss(Nasa) + ggtitle("Nasa Dataset")
+```
+All the missing values occur in "reported obstacles" variable, which has 7 missing values. 
+
+
+## 5-1: Check the correlation
+To check the missingness under the MCAR assumption, variables with high correlation can make the MCAR test misleading. Therefore, we should remove them during the test.
+```{r}
+Nasa_cor <- cor(Nasa[sapply(Nasa, is.numeric)], use = "complete.obs")
+Nasa_cor
+
+
+ggcorrplot(Nasa_cor, lab = TRUE, type = "upper",
+           lab_size = 3, tl.cex = 10, colors = c("red", "white", "blue"),
+           title = "Correlation Matrix of Numeric Variables")
+```
+Based on the correlation analysis of numeric variables and the correlation matrix (heatmap), the variables with the highest correlation are "sq" and "x". Since they are identifiers, and they do not add any meaningful information to the MCAR test, we can safely exclude them. (We can also remove "y" variable for the same reason)
+For  other strongly correlated pairs such as "map height" and "real height" or "real height" and "obstacle", we my consider dropping one from each pair if the MCAR test fails. However, for now, since all these variables have meaningful theoretical relevance to our analysis we'll keep the variables as they are and proceed by removing only "x", "y" and "sq". 
+
+
+## 5-2: MCAR Test
+```{r}
+TestMCARNormality(Nasa[,c("map_height", "real_height", "reported_obstacles", "map_last_update", "obstacle")])
+
+```
+Since the test did not return an error, we can keep the highly correlated variable pairs as they are.
+In general, the dataset does not follow a normal distribution, so, we rely on the non-parametric p-value. The p-value from the non-parametric test is slightly above 0.05 (0.0526). Although it is close to the threshold, we do not reject the null hypothesis, meaning there is not enough evidence to say the data is not MCAR. Therefore, we can reasonably assume that the missing data is Missing Completely At Random (MCAR). 
+Since the missingness rate is only 7%, which is relatively low, using listwise deletion could clean the data set
+
+
+## 5-3: Choose the imputation method
+```{r}
+boxplot(Nasa$reported_obstacles, main = "Boxplot of Reported Obstacles")
+```
+Since there are no outliers in the "reported obstacles" variable, we can use the "Mean Imputation" method for replacing the missing values 
+
+
+## 5-4: Mean Imputation
+```{r}
+Nasa_c <- Nasa
+Nasa_c$reported_obstacles <- ifelse(is.na(Nasa_c$reported_obstacles),
+                                      mean(Nasa_c$reported_obstacles, na.rm = TRUE),Nasa_c$reported_obstacles)
+                
+sum(is.na(Nasa_c))
+summary(Nasa_c)
+```
+Now, there is no missing value in the data set.
+
+
+# Step 6: Graphs and tables 
+```{r}
+ggplot(Nasa_c, aes(x = map_height, y = real_height)) +
+  geom_point(color = "blue", size = 2) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "Map Height", y = "Real Height",
+       title = "Map vs Real Height")
+```
+This is a scatterplot of "map height" vs "real height" with a reference line. The points generally follow a positive linear trend, meaning the higher map heights generally correspond with the higher real heights.
+Many points are above the reference line suggesting that in many cases the real height is higher than the map height. 1.e. tha map underestimates the actual heights. 
+
+
+```{r}
+# Convert to long format for ggplot
+long_data <- pivot_longer(Nasa_c, cols = c(real_height, map_height),
+                          names_to = "type", values_to = "height")
+
+ggplot(long_data, aes(x = sq, y = height, color = type)) +
+  geom_line() +
+  labs(title = "Map vs Real Height by Block",
+       x = "Block Number (sq)", y = "Height", color = "Type") + 
+       scale_color_manual(values = c("real_height" = "blue", "map_height" = "red"))
+
+```
+This lineplot compare the "real height" and "map height" across different block numbers ("sq"). The plot also confirms that nearly in all blocks, the "real height" is higher than the "map height"
+
+
+```{r}
+Nasa_c$map_height_bin <- cut(Nasa_c$map_height,breaks = c(0, 10, 20, 30, 40, Inf),labels = c("0–10", "11–20", "21–30", "31–40", "40+"))
+ggplot(Nasa_c, aes(x = map_height_bin, y = reported_obstacles)) + geom_boxplot(fill = "orange") +
+  labs(title = "Reported Obstacles by Map Height", x = "Map Height (Binned)", y = "Reported Obstacles")
+```
+Based on the boxplot, the highest variability of reported obstacles is in 11-20 and 31-40 ft. 
+The 21-30 and 31-40 are the bins with highest medians which means these heights typically have the most reported obstacles.
+
+
+```{r}
+ggplot(Nasa_c, aes(x=map_source))+geom_bar(fill = "steelblue", color = "black")
+
+ggplot(Nasa_c, aes(x = map_source, y = reported_obstacles)) + geom_boxplot(fill = "orange") + 
+  labs(title = "Reported Obstacles by Map Source", x = "Map Source", y = "Reported Obstacles")
+```
+The barplot shows the most frequent source of map is from Army 
+The boxplot shows that "Google" has the highest median number of reported obstacles, meaning drones generally reports more obstacles when they use Google.
+However, "Apple" maps has the highest maximum number of reported obstacles on a single specific location 
+
+
+```{r}
+ggplot(Nasa_c, aes(x = map_last_update, y = reported_obstacles)) +
+  geom_point(aes(x = map_last_update, y = reported_obstacles)) + 
+  geom_smooth(aes(x = map_last_update, y = reported_obstacles)) + labs(title = "Map Last Update vs Reported Obstacles",  x = "Map Last Update", y = "Reported Obstacles")
+```
+There is no strong or clear pattern between map last update and reported obstacles. The relationship is somewhat flat with small fluctuations, suggesting no consistent trend.
+
+
+```{r}
+ggplot(Nasa_c, aes(x = real_height)) + geom_histogram(binwidth = 10, fill = "steelblue", color = "black")+labs(title = "Real Height")
+ggplot(Nasa_c, aes(x = map_height)) + geom_histogram(binwidth = 5, fill = "steelblue", color = "black") + labs(title = "Map Height")
+ggplot(Nasa_c, aes(x = reported_obstacles)) + geom_histogram(binwidth = 10, fill = "steelblue", color = "black") + labs(title = "Recorded Obstacles Frequency")
+ggplot(Nasa_c, aes(x = map_last_update)) + geom_histogram(binwidth = 30, fill = "steelblue", color = "black")+labs(title = "Map Last Update")
+
+```
+The first histogram shows a slightly right skewed plot which means most obstacles have "real height" below 60ft, with fewer tall obstacles. 
+The second plot shows the fairly even distribution of "map height" across all possible values, which highlights the inconsistency between what drones "think" is there (from the map) vs. actual obstacles.
+The third plot shows the most frequent number of reported obstacles were 0 and 40. 
+The fourth histogram shows that most of the map updates happens more than one month ago
+
+
+# Step 7: Linear Initial Modeling
+```{r}
+# Set "Army" as a reference level for map source since it is the most frequent value
+Nasa_c$map_source <- relevel(Nasa_c$map_source, ref = "Army")
+
+Nasa_lm <- lm(real_height ~ map_height + reported_obstacles + map_last_update + map_source + x + y,data = Nasa_c)
+summary(Nasa_lm)
+```
+
+The multiple R-squared and adjusted R-squared are 78% and 76%, which means the model explains 76-78% of the variation in "real height" which shows a strong overall fit.
+The model is statistically significant overall (p-value: < 2.2e-16), indicating that at least one of the predictors has a significant relationship with the dependent variable (real height)
+Among the predictors, the "map height", and "map_source:Google", "reported obstacles", "map source: Apple" and "x" are statistically significant (p-value: < 2e-16, 0.0421, 0.0171, 9.55e-08 and 0.0430), so they are predictors of "real height". The "map last update" and "y" are not statistically significant (p-value: 0.4834, and 0.9972), meaning they do not have strong effect on "real height"! So, we tried to simplified the linear model without two non significant variables "y" and "map last update" and compare the performance 
+
+
+## 7-1: Simplified linear model
+```{r}
+Nasa_lm_1 <- lm(real_height ~ map_height + reported_obstacles + map_source + x ,data = Nasa_c)
+summary(Nasa_lm_1)
+```
+Removing "map last update" and "y" slightly improves adjusted r-squared and reduces error, so we adopt the simpler model
+ 
+
+# Step 8: Checking Linearity Assumptions
+```{r}
+## 8-1: Linearity
+plot(Nasa_lm_1$fitted.values, Nasa_lm_1$residuals,
+     xlab = "Fitted Values", ylab = "Residuals",
+     main = "Residuals vs Fitted Values")
+abline(h = 0, col = "red")
+
+## 8-2: Normality of Residuals
+# I used the plotting method 
+qqnorm(Nasa_lm_1$residuals)
+qqline(Nasa_lm_1$residuals, col = "red")
+
+## 8-3: Homoscedasticity
+# I used the plotting method
+plot(Nasa_lm_1$fitted.values,Nasa_lm_1$residuals, main = "Fitted vs Residuals")
+abline(h = 0, col = "red")
+
+## 8-4: Independence
+dwtest(Nasa_lm_1)
+
+## 8-5: Multicollinearity
+vif(Nasa_lm_1)
+
+```
+8-1: Check the linearity assumption:
+This plot confirms that residuals are fairly scattered around the horizontal red line.
+
+8-2: Normality of Residuals
+The Q-Q plot shows that most points fall along the red line, and residuals are approximately normal. Some deviation exists at the ends which is acceptable in most cases. Hence, normality assumption is reasonably met!
+
+8-3: Homoscedasticity
+We do not see a funnel shape in the points, so the homoscedasticity assumption is met
+
+8-4: Independence
+The Durbin_Watson p-value is greater than 0.05 (0.75), so we do not have any evidence that the independence assumption is violated and residuals are likely independent.
+
+8-5: Multicollinearity
+All GVIF values are less than 5, which means there is no serious multicollinearity among the predictors and predictors are not highly correlated and so the linear regression model is stable 
+Since no violations of the linear regression assumptions were detected, no model remedies are necessary
+
+There are no major violations of the linearity assumptions based on the above tests. Hence, the model is acceptable and suitable for interpretation and prediction
+
+
+# Step 9: checking for the outliers
+```{r}
+# Calculate cook's distance
+cooks_d <- cooks.distance(Nasa_lm_1)
+
+Nasa_c$cooks_d <- cooks_d
+
+cutoff <- 4 / nrow(Nasa_c)
+
+#Bar plot of Cook’s distance
+plot(cooks_d, type = "h", main = "Cook's Distance", ylab = "Distance")
+abline(h = cutoff, col = "red", lty = 2)
+
+#Label the influential points
+influential_points <- which(cooks_d > cutoff)
+text(influential_points, cooks_d[influential_points], 
+     labels = names(influential_points), pos = 4, col = "red")
+
+
+# Check the influential points in the dataset
+Nasa_c[c(1,5,6,9,10,12,13, 14), ]
+
+```
+The Cook's Distance analysis shows there are 10 influential points in the dataset (rows 1,5,6,9,10,12,13, 14).
+By reviewing these rows and confirming that the values are realistic and free of entry errors, I've decided to keep the values as they are in the dataset. 
+
+
+# Step 10: logistic regression
+```{r}
+Nasa_c$obstacle <- as.factor(Nasa_c$obstacle)
+Nasa_lo <- glm(obstacle ~ map_height + reported_obstacles + map_last_update + map_source + x + y,
+                    family = binomial(link = "logit"),
+                    data = Nasa_c)
+
+summary(Nasa_lo)
+```
+Individually, the predictors' p-values aren't statistically significant, however, collectively they almost perfectly classify obstacle vs non-obstacle on the training set (null deviance drops from 102.8 to 7.6 and the ‘fitted probabilities 0 or 1’ warning), so we can say these p-values are not reliable (we can’t make strong claims about individual predictors), therefore we interpret coefficients with caution and evaluate the model by its predicted probabilities rather than individual p-values
+
+
+## 10-1: Check the linearity assumption for the logit of probability
+```{r}
+binnedplot(predict(Nasa_lo), resid(Nasa_lo))
+```
+Binned residuals (average errors) are near zero line or within the gary band which means there is no clear violation of linearity in the logit assumption. 
+   
+
+
+# Step 11: Bayesian Analysis
+```{r}
+# Set "Army" as a reference level for map source since it is the most frequent value
+Nasa_c$map_source <- relevel(Nasa_c$map_source, ref = "Army")
+
+Nasa_ba= brm(real_height ~ map_height + reported_obstacles + map_last_update + map_source + obstacle+ x + y, data = Nasa_c,iter = 2000, warmup = 200, chains = 3, thin = 2  )
+summary(Nasa_ba)
+#plot(Nasa_ba)
+
+# Comparison the linear and bayesian model coefficiants
+
+comparison <- data.frame(
+  Linear_Estimate   = summary(Nasa_lm_1)$coefficients[, 1],
+  Bayesian_Estimate = summary(Nasa_ba)$fixed[, "Estimate"]
+)
+rownames(comparison) <- rownames(summary(Nasa_lm)$coefficients)
+rownames(comparison) <- gsub("Nasa_c\\$", "", rownames(comparison))
+knitr::kable(comparison, caption = "Comparison of Linear and Bayesian Model Coefficients")
+
+```
+Since all Rhats values equal to 1, and all plots show fuzzy lines, we can conclude the Nasa Bayesian model has converged properly.
+Based on the comparison of coefficients, the Bayesian and Linear models generally agree, especially on strong predictors like "map height" and "map source:Google". Notable differences in coefficients like "obstacle" and "map source:Apple" suggests that the Bayesian model may be influenced by prior assumptions.  
+
+
+## 11-1: Probability of "real height" <= 20 
+```{r}
+# Predict real height values
+Nasa_pred <- posterior_predict(Nasa_ba) 
+
+# Calculate the probability of real height<=20 for each each block
+Nasa_20 <- colMeans(Nasa_pred<=20)
+Nasa_20
+
+Nasa_c$prob_less_20 <- Nasa_20
+head(Nasa_c[, c("sq", "prob_less_20")])
+
+
+```
+
+## 11-2: Probability of safe and unsafe path
+```{r}
+safety_status <- ifelse (Nasa_20 > 0.5, "Unsafe", "safe")
+
+Nasa_c$safety_status <- safety_status
+head(Nasa_c[, c("sq", "prob_less_20", "safety_status")])
+
+#plot the result
+ggplot(Nasa_c, aes(x = x, y = y, fill = safety_status)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = c("safe" = "blue", "Unsafe" = "orange")) +
+  coord_fixed() +
+  labs(title = "Safe vs Unsafe Blocks for Drone Navigation",
+       fill = "Block Status") +
+  theme_minimal()
+
+```
+
+
+## 11.3: Path Optimization
+```{r}
+
+Nasa_c$mean_pred_height <- colMeans(Nasa_pred)
+Nasa_c$sd_pred_height <- apply(Nasa_pred, 2, sd)
+
+# Cost function
+alpha <- 1   # weight for height
+beta <- 2    # weight for uncertainty
+Nasa_c$cost <- alpha * Nasa_c$mean_pred_height + beta * Nasa_c$sd_pred_height
+head (Nasa_c)
+summary (Nasa_c$cost)
+```
+
+```
+
+

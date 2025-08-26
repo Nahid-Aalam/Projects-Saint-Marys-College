@@ -1,0 +1,158 @@
+---
+title: "Nahid Aalam-Project 2"
+output: html_document
+date: "2025-08-10"
+---
+
+# Step 1: Import the necessary packages and libraries
+```{r}
+library(forecast)
+library(tseries)
+library(TSA)
+library(astsa)
+library(ggplot2)
+```
+
+
+# Step 2: Load/ Explore the dataset
+```{r}
+MRI <- read.csv("C:/Users/aalam/OneDrive/Desktop/Advanced Data Analytics/rfMRI.csv")
+head(MRI)
+str(MRI)
+summary(MRI)
+class(MRI)
+```
+
+# Step 3: Handeling missing values
+```{r}
+sum(is.na(MRI))
+```
+We dont have any missing values so we can convert the dataset into a time series
+
+
+# Step 4: converting the dataframe into a timeseries and review the timeseries
+```{r}
+ts_fmri <- ts(as.numeric(as.vector(t(MRI))), start = 1, frequency = 114)
+show(ts_fmri)
+str(ts_fmri)
+typeof(ts_fmri)
+class(ts_fmri)
+summary(ts_fmri)
+
+```
+The timeseries starts at cycle 1 position 1 and ends in cycle 2 position 114. It has 114 observation in each cycle, and 228 observaton in overall
+All the values are numerics (double). The class is now timeseries, converted from dataframe
+
+
+
+# Step 5: Plot the timeseries
+```{r}
+plot(ts_fmri, ylab= "Measuered Signal", xlab= "Time", type = "l")
+plot(ts_fmri, ylab= "Measuered Signal", xlab= "Time", type = "p")
+plot(ts_fmri, ylab= "Measuered Signal", xlab= "Time", type = "o")
+```
+
+There is no obvious steady upward and downward movement overall, so, no strong long-term trends is visible in measured signals.  
+Also, there is no clear, repeating sine-like pattern, so it doesn't show a seasonality pattern as well.
+It mostly fluctuates, with short ups and downs, but without a clear overall rise or fall.
+
+
+# Step 6: Decompose the Time Series
+```{r}
+ts_fmri_de <- decompose(ts_fmri)
+plot(ts_fmri_de)
+```
+Based on the decomposition, there is a gradual upward movement until about time 2.2, then it flattens.
+There is no strong, perfectly repeating cycle, it means the fluctuations are irregular and the noise dominates some parts of the signal
+
+
+# Step 7: Checking th stationarity 
+#Based on visual and decomposition results, do you expect the fMRI signal to be stationary? 
+No. The upward trend in the decomposition means the series is not stationary, because its mean changes over time
+```{r}
+adf.test(ts_fmri)
+
+d_suggest <- ndiffs(ts_fmri)
+d_suggest
+```
+the p-value is slightly above 0.05 (0.05078). However, since we have a binary answer for the stationary checking (yes/no), so the answer is that the timeseries is not stationary. 
+The test suggested that the time series followed some trends and seasonality and not random observations
+And We should set d = 1 in the ARIMA model, which means applying one difference to the series makes the time series becomes stationary and suitable for ARIMA modeling
+
+
+# Step 8: Plotting ACF & PACF
+```{r}
+tsdisplay(ts_fmri)
+```
+The ACF plot shows that series has statistically significant correlation with some past lags
+The PACF plot shows that the three first lags have a direct effect on the series. 
+
+
+# Step 9: Plotting the correlations
+```{r}
+mri_df = data.frame (current_time=ts_fmri,
+                       previous_time= zlag(ts_fmri))
+ggplot(data = mri_df, mapping = aes(x = previous_time, y = current_time)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+The correlation plot show that, at lag-1, the higher signal value in one scan tend to be followed by high values in the next scan, showing a positive correlation
+
+
+# Step 10: Fit AR, MA, ARMA & ARIMA Models
+Since the series is not stationary, AR, MA and ARMA doesn't fit the time series. Only ARIMA can apply, but I still include them for comparison
+```{r}
+acf(ts_fmri)
+pacf(ts_fmri)
+
+# 1. AR(3)
+mri_ar3 <- arima(ts_fmri, order = c(3,0,0))
+mri_ar3
+
+# 2. MA(5)
+mri_ma5 <- arima(ts_fmri, order = c(0,0,5))
+mri_ma5
+
+# 3. ARIMA(3,0,5) or (ARMA(3,5))
+mri_arima305 <- arima(ts_fmri, order = c(3,0,5))
+mri_arima305
+
+# 4. ARIMA(3,1,5)
+mri_arima315 <- arima(ts_fmri, order = c(3,1,5))
+mri_arima315
+
+# 5. ARIMA(3,2,5)
+mri_arima325 <- arima(ts_fmri, order = c(3,2,5))
+mri_arima325
+```
+The lowest AIC among these five models is for MA model c(3,0,0) (AIC = -13.1)
+
+
+# Step 11: Auto modeling
+```{r}
+mri_arima_auto <- auto.arima (ts_fmri)
+mri_arima_auto
+```
+The auto modeling result is ARIMA(2,1,1) with lowest AIC (-13.24) among all.It's simpler, has fewer parameters (less risk of overfitting), and still fits the data well.
+
+
+# Step 12: Forecast Future Brain Activity
+```{r}
+mri_forecast <- forecast(mri_arima_auto, h = 10)
+
+plot(mri_forecast)
+```
+# Does the forecast reflect known signal patterns? 
+No, the ARIMA forecast usually flatten around the last observed value, with widening uncertainty over time.  
+
+# Could this type of analysis be useful for detecting shifts in cognitive states or neural dysregulation? 
+No, the increasing width of the shaded bands (the darker band is 80% confidence, lighter band is 95%) means the further ahead we predict, the less certain the prediction becomes.
+
+# Could this help identify disruptions in brain network activity (e.g., resting-state abnormalities)?
+This kind of time series modeling can sometimes help scientists see if brain signals behave unusually, for example if activity does not follow normal patterns. That could hint at problems in how brain networks are working
+
+# What are the limitations of your approach?
+The forecast itself (ARIMA) is not very reliable for long-term prediction. Also, this method only looks at numbers and patterns, not the deeper biology, so it may miss important details.
+
+# How might time series modeling contribute to understanding resting-state brain function in research or diagnostics?
+Even with limits, time series models give a structured way to study brain activity over time. They can help researchers compare healthy vs. abnormal patterns, and provide an extra tool for diagnostics or research into resting-state brain function
