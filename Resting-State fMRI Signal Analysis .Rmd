@@ -138,6 +138,7 @@ The auto modeling result is ARIMA(2,1,1) with lowest AIC (-13.24) among all.It's
 
 # Step 12: Anomaly Detection
 # 12-1: Residual-based anomaly detection
+```{r}
 residuals <- residuals(mri_arima_auto)
 anomaly_points <- which(abs(residuals) > 3*sd(residuals))
 anomaly_points
@@ -155,7 +156,7 @@ plot(ts_fmri, type="l", main="Time Series with Forecast Bands")
 lines(fitted_vals, col="blue")
 lines(upper_band, col="red", lty=2)
 lines(lower_band, col="red", lty=2)
-
+```
 
 # Step 13: Forecast Future Brain Activity
 ```{r}
@@ -177,5 +178,6 @@ The forecast itself (ARIMA) is not very reliable for long-term prediction. Also,
 
 # How might time series modeling contribute to understanding resting-state brain function in research or diagnostics?
 Even with limits, time series models give a structured way to study brain activity over time. They can help researchers compare healthy vs. abnormal patterns, and provide an extra tool for diagnostics or research into resting-state brain function
+
 
 
