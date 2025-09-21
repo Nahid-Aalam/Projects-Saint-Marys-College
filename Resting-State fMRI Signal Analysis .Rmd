@@ -157,7 +157,7 @@ lines(upper_band, col="red", lty=2)
 lines(lower_band, col="red", lty=2)
 
 
-# Step 12: Forecast Future Brain Activity
+# Step 13: Forecast Future Brain Activity
 ```{r}
 mri_forecast <- forecast(mri_arima_auto, h = 10)
 
@@ -177,4 +177,5 @@ The forecast itself (ARIMA) is not very reliable for long-term prediction. Also,
 
 # How might time series modeling contribute to understanding resting-state brain function in research or diagnostics?
 Even with limits, time series models give a structured way to study brain activity over time. They can help researchers compare healthy vs. abnormal patterns, and provide an extra tool for diagnostics or research into resting-state brain function
+
 
